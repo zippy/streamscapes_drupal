@@ -1,0 +1,7 @@
+name = Streamscapes
+description = dunno yet
+core = 7.x
+package = metacurrency
+
+files[] = streamscapes.module
+files[] = streamscapes.install

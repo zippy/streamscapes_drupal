@@ -1,0 +1,152 @@
+<?php
+
+define('STREAMSCAPES_SERVER', 'http://zippy.local:8080/api');
+
+function streamscapes_menu() {
+  return array(
+    'streamscapes' => array(
+      'title' => 'Streamscapes',
+      'page callback' => 'streamscapes_page',
+      'access arguments' => array('access content'),
+    )
+  );
+}
+
+function streamscapes_user($op, $account) {
+
+}
+
+function streamscapes_cron() {
+  //retrieve the groove definitions
+  $query = drupal_json_encode(array(
+    'cmd' => 'get-state',
+    'params' => array(
+      'receptor' => 0,
+      'query' => array(
+        'partial' => array(
+          'receptor-order' => TRUE,
+          'scapes' => array(
+            'groove-scape' => array(
+              'values' => TRUE
+            )
+          ),
+          'receptors' => TRUE
+        ),
+        'scape-order' => array(
+          'scape' => 'groove',
+          'scape-receptors-only' => TRUE,
+        )
+      )
+    )
+  ));
+  $result = drupal_http_request(STREAMSCAPES_SERVER, array('data' => $query, 'method' => 'POST'));
+  $data = drupal_json_decode($result->data);
+  debug($data);
+  foreach($data['result']['receptors'] as $rid => $groove) {
+    $grooves[$rid] = $groove['grammars'];
+  }
+  variable_set('streamscapes_grooves', $grooves);
+
+}
+
+function streamscapes_page() {
+  $query = drupal_json_encode(array(
+    'cmd' => 'get-state',
+    'params' => array(
+      'receptor' => 18,
+      'query' => array(
+        'scape-order' => array(
+          'scape' => 'delivery',
+          'limit' => 20,
+          'offset' => 0,
+          'descending' => TRUE,
+          'frequencies' => TRUE,
+        )
+      )
+    )
+  ));
+  $result = drupal_http_request(STREAMSCAPES_SERVER, array('data' => $query, 'method' => 'POST'));
+  $data = drupal_json_decode($result->data);
+  debug($data);
+
+  $grooves = variable_get('streamscapes_grooves', array());
+  //start shaping all these objects into something consistent, say, that can be previewed
+  foreach ($data['result']['receptor-order'] as $droplet_address) {
+    $droplets[$droplet_address]->channel_address = $data['result']['scapes']['droplet-channel-scape']['values'][$droplet_address];
+//    $droplets[$droplet_address]->channel_type_scape =  $data['result']['scapes']['channel-type-scape']['values'][$droplets[$droplet_address]->channel_address];
+//    $droplets[$droplet_address]->channel_id = $data['result']['scapes']['channel-scape']['values'][$droplets[$droplet_address]->channel];
+    $droplets[$droplet_address]->groove_scape = $data['result']['scapes']['simple-message-groove-scape']['values'][$droplet_address];
+    $droplets[$droplet_address]->receipt = strtotime(array_search($droplet_address, $data['result']['scapes']['receipt-scape']['values']));
+    $droplets[$droplet_address]->groove_names = $data['result']['scapes']['droplet-grooves-scape']['values'][$droplet_address];
+    $droplets[$droplet_address]->droplet = $data['result']['receptors'][$droplet_address];
+    $droplets[$droplet_address]->text = $data['result']['receptors'][$droplet_address]['content']['text'];
+    //twitter only
+    $droplets[$droplet_address]->to_name = array_search($droplets[$droplet_address]->droplet['to'], $data['result']['scapes']['twitter-contact-scape']['values']);
+    $droplets[$droplet_address]->from_name = array_search($droplets[$droplet_address]->droplet['from'], $data['result']['scapes']['twitter-contact-scape']['values']);
+    
+  }
+  debug($droplets);
+
+
+  return array(
+    '#theme' => 'dropletable',
+    '#droplets' => $droplets
+  );
+}
+
+function streamscapes_theme() {
+  return array(
+    'dropletable' => array(
+      'variables' => array(
+        'droplets' => array(),
+      )
+    )
+  );
+}
+
+function template_preprocess_dropletable(&$variables) {
+  $droplets = &$variables['droplets'];
+  foreach ($droplets as $did => $droplet) {
+    switch($droplet->channel_type_scape) {
+      case 'twitter' :
+        $droplets[$did]->icon = 'http://zippy.local:8080/ss/images/twitter.png';
+        if ($droplet->receipt) $droplets[$did]->receipt = format_date($droplet->receipt, 'short');
+    }
+  }
+}
+function theme_dropletable($variables) {
+  $header = array('Icon', 'From', 'Text', 'Time');
+  foreach($variables['droplets'] as $did => $droplet) {
+    $rows[$did] = array(
+      '<img src="'.$droplet->icon.'">',
+      $droplet->from_name,
+      $droplet->text,
+      $droplet->receipt
+    );
+  }
+  return theme('table', array('header' => $header, 'rows' => $rows));
+}
+
+/* groove-scape is saved like this
+[groove-scape] => Array (
+  [values] => Array  (
+    [bookmark] => 12
+    [lazyweb-thanks] => 13
+    [poll] => 11
+    [punkmoney] => 10
+    [simple-message] => 8
+    [subject-body-message] => 9
+  )
+)
+  * channel-scape is not saved
+[channel-scape] => Array (
+  [values] => Array (
+    [streamscapes] => 10
+    [twitter-metacurrency] => 18
+  )
+  [relationship] => Array (
+    [key] => channel-name
+    [address] => channel-address
+  )
+)
+ */
